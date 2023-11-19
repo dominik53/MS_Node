@@ -31,7 +31,7 @@ const String endpointPost = "/post";
 #define VOLTAGE_MEASUREMENTS 7
 #define TOF_MEASUREMENTS 7
 #define MIN_CONNECT_TIME 10 // seconds
-#define MIN_WAKE_INTERVAL 5 // minutes
+#define MIN_WAKE_INTERVAL 300 // seconds
 const float detectPrecision = 0.975;
 
 struct Data {
@@ -43,6 +43,8 @@ struct Data {
     int hours;
     int minutes;
     int seconds;
+    int wakeInterval; // seconds
+    int connectTime;  // seconds
 };
 
 struct UpdateData {
@@ -51,9 +53,10 @@ struct UpdateData {
     int year;
     int hours;
     int minutes;
-    int wakeInterval; // minutes
+    int wakeInterval; // seconds
     int connectTime;  // seconds
     bool calibrate;
+    int seconds;
 };
 
 /*
@@ -63,23 +66,18 @@ struct UpdateData {
     0x51 - RTC
 */
 
-/*
-  todo:
-    - obsluga kalibracji
-*/
-
 TaskHandle_t task1;
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 Adafruit_FRAM_I2C fram = Adafruit_FRAM_I2C();
 I2C_BM8563 rtc(I2C_BM8563_DEFAULT_ADDRESS, Wire);
-Data acquiredData={0,0,0,0,0,0,0,0};
-UpdateData receivedData={-1,-1,-1,-1,-1,-1,-1,0};
+Data acquiredData={0,0,0,0,0,0,0,0,0,0};
+UpdateData receivedData={-1,-1,-1,-1,-1,-1,-1,0,-1};
 unsigned long startTime=0;
 float battPercentage=0; // %
 float ToFMeasurement=0; // mm
 
-float ToFCalibratedDist=0; // mm    // todo: write to fram
-int wakeInterval=MIN_WAKE_INTERVAL; // minutes
+float ToFCalibratedDist=0; // mm
+int wakeInterval=MIN_WAKE_INTERVAL; // seconds
 int connectTime=MIN_CONNECT_TIME;   // seconds
 
 bool ToFReady=0;
@@ -151,9 +149,10 @@ void setup() {
 void loop() {
   if(digitalRead(SW0)==LOW){
     Serial.println("WCISNIETO.");
+
     delay(100);
   }
-  
+  delay(100);
 
 }
 ////////////////////////////
@@ -173,11 +172,11 @@ void controlTime(void *parameter){
       // force end
       Serial.println("FORCE END");
       rtc.clearIRQ();
-      if(wakeInterval>=MIN_WAKE_INTERVAL){
-        rtc.SetAlarmIRQ(wakeInterval*60);
-      }else{
-        rtc.SetAlarmIRQ(MIN_WAKE_INTERVAL*60);
-      }
+      // if(wakeInterval>=MIN_WAKE_INTERVAL){
+        rtc.SetAlarmIRQ(wakeInterval);
+      // }else{
+      //   rtc.SetAlarmIRQ(MIN_WAKE_INTERVAL*60);
+      // }
       digitalWrite(PIN_WAKE, LOW);
       delay(20);
     }
@@ -186,22 +185,22 @@ void controlTime(void *parameter){
       // end, connection timeout
       Serial.println("END, CONNECTION TIMEOUT");
       rtc.clearIRQ();
-      if(wakeInterval>=MIN_WAKE_INTERVAL){
-        rtc.SetAlarmIRQ(wakeInterval*60);
-      }else{
-        rtc.SetAlarmIRQ(MIN_WAKE_INTERVAL*60);
-      }
+      // if(wakeInterval>=MIN_WAKE_INTERVAL){
+        rtc.SetAlarmIRQ(wakeInterval);
+      // }else{
+      //   rtc.SetAlarmIRQ(MIN_WAKE_INTERVAL*60);
+      // }
       digitalWrite(PIN_WAKE, LOW);
       delay(20);
     }else if(runningTime/1000>connectTime*1.5 && connectTime>=10){
       // end, error past post
       Serial.println("END, ERROR PAST POST");
       rtc.clearIRQ();
-      if(wakeInterval>=MIN_WAKE_INTERVAL){
-        rtc.SetAlarmIRQ(wakeInterval*60);
-      }else{
-        rtc.SetAlarmIRQ(MIN_WAKE_INTERVAL*60);
-      }
+      // if(wakeInterval>=MIN_WAKE_INTERVAL){
+        rtc.SetAlarmIRQ(wakeInterval);
+      // }else{
+      //   rtc.SetAlarmIRQ(MIN_WAKE_INTERVAL*60);
+      // }
       digitalWrite(PIN_WAKE, LOW);
       delay(20);
     }
@@ -213,11 +212,11 @@ void controlTime(void *parameter){
       // wybudz po wakeInterval
       Serial.println("NORMAL END");
       rtc.clearIRQ();
-      if(wakeInterval>=MIN_WAKE_INTERVAL){
-        rtc.SetAlarmIRQ(wakeInterval*60);
-      }else{
-        rtc.SetAlarmIRQ(MIN_WAKE_INTERVAL*60);
-      }
+      // if(wakeInterval>=MIN_WAKE_INTERVAL){
+        rtc.SetAlarmIRQ(wakeInterval);
+      // }else{
+        // rtc.SetAlarmIRQ(MIN_WAKE_INTERVAL*60);
+      // }
       digitalWrite(PIN_WAKE, LOW);
       delay(20);
     }
@@ -229,8 +228,16 @@ void controlTime(void *parameter){
 }
 
 void calibrate(void *parameter){
-  // todo
+  ToFCalibratedDist=ToFMeasurement;
 
+  uint8_t tempBuffer[4];
+  tempBuffer[0] = (int)round(ToFCalibratedDist) & 0xFF;
+  tempBuffer[1] = ((int)round(ToFCalibratedDist) >> 8) & 0xFF;
+  tempBuffer[2] = ((int)round(ToFCalibratedDist) >> 16) & 0xFF;
+  tempBuffer[3] = ((int)round(ToFCalibratedDist) >> 24) & 0xFF;
+  fram.write(0x08, tempBuffer, 4);
+
+  acquiredData.detected=0;
   updateHandleDone[1]=1;
   vTaskDelete(NULL);
 }
@@ -242,10 +249,10 @@ void updateValues(void *parameter){
     updateHandleDone[1]=1;
   }
 
-  bool dateChanged=0;
+  bool dataChanged=0;
 
   if(receivedData.day!=-1 || receivedData.month!=-1 || receivedData.year!=-1){
-    dateChanged=1;
+    dataChanged=1;
     I2C_BM8563_DateTypeDef dateStruct;
     dateStruct.weekDay=1;
     
@@ -278,18 +285,25 @@ void updateValues(void *parameter){
     fram.write(0x03, tempBuffer1, 2);
   }
 
-  if(receivedData.hours!=-1 || receivedData.minutes!=-1){
-    dateChanged=1;
+  if(receivedData.hours!=-1 || receivedData.minutes!=-1 ||  receivedData.seconds!=-1){ //todo sec
+    dataChanged=1;
     I2C_BM8563_TimeTypeDef timeStruct;
-    timeStruct.seconds=acquiredData.seconds;
 
+    if(receivedData.seconds!=-1){
+      timeStruct.seconds=receivedData.seconds;
+      acquiredData.seconds=receivedData.seconds;
+    }else{
+      timeStruct.seconds=acquiredData.seconds;
+    }
     if(receivedData.hours!=-1){
       timeStruct.hours=receivedData.hours;
+      acquiredData.hours=receivedData.hours;
     }else{
       timeStruct.hours=acquiredData.hours;
     }
     if(receivedData.minutes!=-1){
       timeStruct.minutes=receivedData.minutes;
+      acquiredData.minutes=receivedData.minutes;
     }else{
       timeStruct.minutes=acquiredData.minutes;
     }
@@ -302,15 +316,11 @@ void updateValues(void *parameter){
   }
 
   for(;;){
-    if(updateReceivedDone){
+    if(updateReceivedDone && updateHandleDone[1]){
       break;
     }else{
       delay(20);
     }
-  }
-
-  if(dateChanged){
-    xTaskCreatePinnedToCore(HTTPPost,"HTTPPost",4096,nullptr,1,&task1,1 );
   }
   
   /*
@@ -332,11 +342,13 @@ void updateValues(void *parameter){
   */
 
   if(receivedData.connectTime!=-1){
+    dataChanged=1;
     if(receivedData.connectTime>=MIN_CONNECT_TIME){
       connectTime=receivedData.connectTime;
     }else{
       connectTime=MIN_CONNECT_TIME;
     }
+    acquiredData.connectTime=connectTime;
     uint8_t tempBuffer2[4];
     tempBuffer2[0] = connectTime & 0xFF;
     tempBuffer2[1] = (connectTime >> 8) & 0xFF;
@@ -350,11 +362,14 @@ void updateValues(void *parameter){
   
 
   if(receivedData.wakeInterval!=-1){
-    if(receivedData.wakeInterval>=MIN_WAKE_INTERVAL){
-      wakeInterval=receivedData.wakeInterval;
-    }else{
-      wakeInterval=MIN_WAKE_INTERVAL;
-    }
+    dataChanged=1;
+    // if(receivedData.wakeInterval>=MIN_WAKE_INTERVAL){
+    //   wakeInterval=receivedData.wakeInterval;
+    // }else{
+    //   wakeInterval=MIN_WAKE_INTERVAL;
+    // }
+    wakeInterval=receivedData.wakeInterval;
+    acquiredData.wakeInterval=wakeInterval;
     uint8_t tempBuffer2[4];
     tempBuffer2[0] = wakeInterval & 0xFF;
     tempBuffer2[1] = (wakeInterval >> 8) & 0xFF;
@@ -365,7 +380,12 @@ void updateValues(void *parameter){
     Serial.print("Nowy interwal wybudzania: ");
     Serial.println(wakeInterval);
   }
-  updateHandleDone[0]=1;
+
+  if(dataChanged){
+    xTaskCreatePinnedToCore(HTTPPost,"HTTPPost",4096,nullptr,1,&task1,1 );
+  }else{
+    updateHandleDone[0]=1;
+  }
   
   vTaskDelete(NULL);
 }
@@ -481,6 +501,8 @@ void HTTPPost(void *parameter){
       String messageHours=String(acquiredData.hours);
       String messageMinutes=String(acquiredData.minutes);
       String messageSeconds=String(acquiredData.seconds);
+      String messageConTime=String(acquiredData.connectTime);
+      String messageWakeInterval=String(acquiredData.wakeInterval);
 
       HTTPClient http;
       const String temp = ":";
@@ -497,6 +519,8 @@ void HTTPPost(void *parameter){
       postData += "&messageHours=" + messageHours;
       postData += "&messageMinutes=" + messageMinutes;
       postData += "&messageSeconds=" + messageSeconds;
+      postData += "&messageConTime=" + messageConTime;
+      postData += "&messageWakeInterval=" + messageWakeInterval;
 
       int httpResponseCode = http.POST(postData);
       if (httpResponseCode > 0) {
@@ -582,7 +606,7 @@ void HTTPUpdate(void *parameter){
         Serial.println(httpCode);
 
         String response = http.getString();
-        sscanf(response.c_str(), "%d,%d,%d,%d,%d,%d,%d,%d", &receivedData.day, &receivedData.month, &receivedData.year, &receivedData.hours, &receivedData.minutes, &receivedData.wakeInterval, &receivedData.connectTime, &receivedData.calibrate);
+        sscanf(response.c_str(), "%d,%d,%d,%d,%d,%d,%d,%d,%d", &receivedData.day, &receivedData.month, &receivedData.year, &receivedData.hours, &receivedData.minutes, &receivedData.wakeInterval, &receivedData.connectTime, &receivedData.calibrate, &receivedData.seconds);
         
         xTaskCreatePinnedToCore(updateValues,"updateValues",2048,nullptr,1,&task1,1 );
         xTaskCreatePinnedToCore(HTTPUpdateReceived,"HTTPUpdateReceived",4096,nullptr,1,&task1,1 );
@@ -710,6 +734,9 @@ void FRAMRead(void *parameter){
   }
   Serial.print("Connect time: ");
   Serial.println(connectTime);
+
+  acquiredData.wakeInterval=wakeInterval;
+  acquiredData.connectTime=connectTime;
 
   for(;;){
     if(timeGot && dateGot){
