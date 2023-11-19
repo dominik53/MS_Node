@@ -113,6 +113,11 @@ void updateValues(void *parameter);         // update values acquired from stati
 void calibrate(void *parameter);            // calibrate new distance
 void controlTime(void *parameter);          // end scenarios, software watchdog
 
+/*
+  todo:
+  - what if tof out of range
+*/
+
 void setup() {
   Serial.begin(115200);
   // while(!Serial);
@@ -285,7 +290,7 @@ void updateValues(void *parameter){
     fram.write(0x03, tempBuffer1, 2);
   }
 
-  if(receivedData.hours!=-1 || receivedData.minutes!=-1 ||  receivedData.seconds!=-1){ //todo sec
+  if(receivedData.hours!=-1 || receivedData.minutes!=-1 ||  receivedData.seconds!=-1){
     dataChanged=1;
     I2C_BM8563_TimeTypeDef timeStruct;
 
