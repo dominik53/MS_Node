@@ -801,33 +801,40 @@ void FRAMRead(void *parameter){
 }
 
 void RTCGet(void *parameter){
+  for(;;){
+    if(RTCReady){
+      break;
+    }else{
+      delay(20);
+    }
+  }
+
   I2C_BM8563_DateTypeDef dateStruct;
   I2C_BM8563_TimeTypeDef timeStruct;
-  for(;;){
-    rtc.getDate(&dateStruct);
-    rtc.getTime(&timeStruct);
+  
+  rtc.getDate(&dateStruct);
+  rtc.getTime(&timeStruct);
 
-    acquiredData.day=dateStruct.date;
-    acquiredData.month=dateStruct.month;
-    acquiredData.year=dateStruct.year;
-    dateGot=1;
+  acquiredData.day=dateStruct.date;
+  acquiredData.month=dateStruct.month;
+  acquiredData.year=dateStruct.year;
+  dateGot=1;
 
-    acquiredData.hours=timeStruct.hours;
-    acquiredData.minutes=timeStruct.minutes;
-    acquiredData.seconds=timeStruct.seconds;
-    timeGot=1;
+  acquiredData.hours=timeStruct.hours;
+  acquiredData.minutes=timeStruct.minutes;
+  acquiredData.seconds=timeStruct.seconds;
+  timeGot=1;
 
-    Serial.printf("%04d/%02d/%02d %02d:%02d:%02d\n",
-                  dateStruct.year,
-                  dateStruct.month,
-                  dateStruct.date,
-                  timeStruct.hours,
-                  timeStruct.minutes,
-                  timeStruct.seconds
-                 );
+  Serial.printf("%04d/%02d/%02d %02d:%02d:%02d\n",
+                dateStruct.year,
+                dateStruct.month,
+                dateStruct.date,
+                timeStruct.hours,
+                timeStruct.minutes,
+                timeStruct.seconds
+               );
 
-    break;
-  }
+  
   vTaskDelete(NULL);
 }
 
