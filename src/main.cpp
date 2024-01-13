@@ -33,7 +33,6 @@ const String endpointPost = "/post";
 #define TOF_MEASUREMENTS 7
 #define MIN_CONNECT_TIME 10 // seconds
 #define MIN_WAKE_INTERVAL 300 // seconds
-const float detectPrecision = 0.975;
 
 struct Data {
     float distance;
@@ -62,7 +61,6 @@ unsigned long startTime=0;
 float battPercentage=0; // %
 float ToFMeasurement=0; // mm
 
-float ToFCalibratedDist=0; // mm
 int wakeInterval=MIN_WAKE_INTERVAL; // seconds
 int connectTime=MIN_CONNECT_TIME;   // seconds
 
@@ -73,7 +71,7 @@ bool batteryDone=0;
 bool detectionDone=0;
 bool postDone=0;
 bool readyToSleep=0;
-bool updateHandleDone[2]={0,0};
+bool updateHandleDone=0;
 
 void TOFMeasureContinous(void *parameter);  // calculate median distance
 void APConnect(void *parameter);            // connect to station's AP
@@ -174,7 +172,7 @@ void controlTime(void *parameter){
       delay(20);
     }
 
-    if(readyToSleep || (updateHandleDone[0]==1 && updateHandleDone[1]==1)){
+    if(readyToSleep || (updateHandleDone==1)){
       // wake after wakeInterval
       Serial.println("NORMAL END");
       rtc.clearIRQ();
@@ -193,21 +191,6 @@ void controlTime(void *parameter){
 
 
 void updateValues(void *parameter){
-  if(receivedData.calibrate){
-    ToFCalibratedDist=ToFMeasurement;
-    updateHandleDone[1]=1;
-  }else{
-    updateHandleDone[1]=1;
-  }
-
-  for(;;){
-    if(updateHandleDone[1]){
-      break;
-    }else{
-      delay(20);
-    }
-  }
-
   if(receivedData.connectTime!=-1){
     if(receivedData.connectTime>=MIN_CONNECT_TIME){
       connectTime=receivedData.connectTime;
@@ -230,7 +213,7 @@ void updateValues(void *parameter){
   }
 
   preferences.end();
-  updateHandleDone[0]=1;
+  updateHandleDone=1;
   
   vTaskDelete(NULL);
 }
